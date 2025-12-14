@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bubble Pop Dream</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #2c0e3a; /* Dark purple background */
+            font-family: 'Fredoka One', cursive;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none; /* Prevent scrolling on mobile */
+        }
+
+        /* Ad Containers */
+        .ad-container {
+            width: 320px;
+            height: 50px;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            flex-shrink: 0;
+        }
+
+        /* Game Area */
+        #game-container {
+            position: relative;
+            flex-grow: 1;
+            width: 100%;
+            max-width: 600px; /* Keep it portrait-ish on desktop */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(180deg, #3b1655 0%, #1a0821 100%);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        /* Start Overlay */
+        #start-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 20;
+            cursor: pointer;
+        }
+
+        h1 { margin: 0; font-size: 40px; text-shadow: 2px 2px #ff00de; text-align: center;}
+        p { font-size: 20px; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ad-container" id="ad-top">
+       <script type="text/javascript">
+  atOptions = {
+  	'key' : '3c95f890bef171b776d536d59eb74804',
+  	'format' : 'iframe',
+  	'height' : 50,
+  	'width' : 320,
+  	'params' : {}
+  };
+</script>
+<script
+  type="text/javascript"
+  src="//www.highperformanceformat.com/3c95f890bef171b776d536d59eb74804/invoke.js"></script>
+    </div>
+
+   <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="start-overlay">
+            <h1>BUBBLE POP<br>DREAM</h1>
+            <p>Tap to Start</p>
+        </div>
+    </div>
+
+    <div class="ad-container" id="ad-bottom">
+        <script type="text/javascript">
+            atOptions = {
+                'key' : '0d96aa84e4a65e69bc79b0db0d0420c3',
+                'format' : 'iframe',
+                'height' : 50,
+                'width' : 320,
+                'params' : {}
+            };
+        </script>
+        <script type="text/javascript" src="//www.highperformanceformat.com/0d96aa84e4a65e69bc79b0db0d0420c3/invoke.js"></script>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('start-overlay');
+        
+        // Colors corresponding to 0-5
+        const TYPES = ['red', 'blue', 'yellow', 'green', 'white', 'black'];
+        // Fallback colors if images don't load
+        const HEX_COLORS = ['#FF0000', '#0000FF', '#FFFF00', '#008000', '#FFFFFF', '#333333'];
+
+        const ASSETS = {
+            images: {},
+            sounds: {},
+            music: null
+        };
+
+        // Grid Settings
+        const COLS = 8;
+        const ROWS = 12; // visible rows
+        let TILE_SIZE = 0; // calculated dynamically
+        let grid = []; // 2D array: { type: int, x: int, y: int, active: bool }
+        
+        // Game State
+        let bullet = null; // The bubble being shot
+        let nextBulletType = 0;
+        let animationId;
+        let gameActive = false;
+        let touchX = 0, touchY = 0; // for aiming
+
+        // --- ASSET LOADING ---
+        function loadAssets() {
+            // Load Images
+            TYPES.forEach((type, index) => {
+                const img = new Image();
+                img.src = `${type}.png`;
+                ASSETS.images[index] = img;
+
+                const snd = new Audio();
+                snd.src = `${type}1.mp3`;
+                ASSETS.sounds[index] = snd;
+            });
+
+            // Load Music
+            ASSETS.music = new Audio('music.mp3');
+            ASSETS.music.loop = true;
+            ASSETS.music.volume = 0.5;
+        }
+
+        // --- INITIALIZATION ---
+        function resize() {
+            const container = document.getElementById('game-container');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            
+            // Calculate tile size based on width
+            TILE_SIZE = canvas.width / (COLS + 0.5);
+            
+            // If already playing, redraw grid logic might need adjustment, 
+            // but for simplicity we rely on relative drawing.
+        }
+
+        function initGrid() {
+            grid = [];
+            for (let r = 0; r < ROWS + 5; r++) { // Extra rows for buffer
+                grid[r] = [];
+                for (let c = 0; c < COLS; c++) {
+                    // Start with some random bubbles in top half
+                    if (r < 5) {
+                        grid[r][c] = { type: Math.floor(Math.random() * 6), active: true };
+                    } else {
+                        grid[r][c] = { type: -1, active: false };
+                    }
+                }
+            }
+            spawnBullet();
+        }
+
+        function spawnBullet() {
+            bullet = {
+                x: canvas.width / 2,
+                y: canvas.height - TILE_SIZE,
+                type: nextBulletType,
+                angle: -Math.PI / 2, // pointing up
+                speed: 15, // speed of bubble
+                moving: false,
+                dx: 0,
+                dy: 0
+            };
+            nextBulletType = Math.floor(Math.random() * 6);
+        }
+
+        function startGame() {
+            if(gameActive) return;
+            gameActive = true;
+            overlay.style.display = 'none';
+            
+            // Play Music
+            ASSETS.music.play().catch(e => console.log("Interaction required for music"));
+
+            initGrid();
+            gameLoop();
+        }
+
+        // --- MATH & LOGIC ---
+
+        function getTileCoordinate(row, col) {
+            // Even rows are normal, Odd rows are shifted right by half width
+            let x = col * TILE_SIZE + TILE_SIZE/2;
+            if (row % 2 !== 0) {
+                x += TILE_SIZE / 2;
+            }
+            let y = row * (TILE_SIZE * 0.85) + TILE_SIZE/2; // 0.85 is rough approx for hex height
+            return { x, y };
+        }
+
+        // Convert x,y to closest grid row, col
+        function getGridPosition(x, y) {
+            let gridY = Math.round((y - TILE_SIZE/2) / (TILE_SIZE * 0.85));
+            let xOffset = 0;
+            if (gridY % 2 !== 0) xOffset = TILE_SIZE / 2;
+            let gridX = Math.round((x - TILE_SIZE/2 - xOffset) / TILE_SIZE);
+            return { c: gridX, r: gridY };
+        }
+
+        function drawBubble(ctx, x, y, type, radius) {
+            // Try to draw image
+            const img = ASSETS.images[type];
+            if (img && img.complete && img.naturalHeight !== 0) {
+                ctx.drawImage(img, x - radius, y - radius, radius * 2, radius * 2);
+            } else {
+                // Fallback to color/circle
+                ctx.beginPath();
+                ctx.arc(x, y, radius - 2, 0, Math.PI * 2);
+                ctx.fillStyle = HEX_COLORS[type];
+                ctx.fill();
+                ctx.strokeStyle = "rgba(0,0,0,0.3)";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // Shine effect
+                ctx.beginPath();
+                ctx.arc(x - radius/3, y - radius/3, radius/4, 0, Math.PI*2);
+                ctx.fillStyle = "rgba(255,255,255,0.4)";
+                ctx.fill();
+            }
+        }
+
+        function update() {
+            if (!bullet.moving) return;
+
+            bullet.x += bullet.dx;
+            bullet.y += bullet.dy;
+
+            // Wall Collision
+            if (bullet.x - TILE_SIZE/2 < 0) {
+                bullet.x = TILE_SIZE/2;
+                bullet.dx = -bullet.dx;
+            } else if (bullet.x + TILE_SIZE/2 > canvas.width) {
+                bullet.x = canvas.width - TILE_SIZE/2;
+                bullet.dx = -bullet.dx;
+            }
+
+            // Ceiling Collision
+            if (bullet.y - TILE_SIZE/2 < 0) {
+                snapBubble();
+                return;
+            }
+
+            // Bubble Collision
+            // Simple distance check against all active bubbles
+            // Optimization: Only check nearby rows could be better, but loop is small enough
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (grid[r][c].active) {
+                        let pos = getTileCoordinate(r, c);
+                        let dist = Math.hypot(bullet.x - pos.x, bullet.y - pos.y);
+                        if (dist < TILE_SIZE * 0.9) { // Collision radius
+                            snapBubble();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        function snapBubble() {
+            bullet.moving = false;
+            let pos = getGridPosition(bullet.x, bullet.y);
+            
+            // Boundary checks
+            if (pos.c < 0) pos.c = 0;
+            if (pos.c >= COLS) pos.c = COLS - 1;
+            if (pos.r < 0) pos.r = 0;
+            
+            // Adjust for odd rows pushing last col out
+            if (pos.r % 2 !== 0 && pos.c >= COLS - 1) pos.c = COLS - 2;
+
+            // Place bubble
+            if(!grid[pos.r]) grid[pos.r] = [];
+            grid[pos.r][pos.c] = { type: bullet.type, active: true };
+
+            // Check Matches
+            checkMatches(pos.r, pos.c, bullet.type);
+            
+            spawnBullet();
+        }
+
+        // Flood Fill Algorithm to find matches
+        function checkMatches(r, c, type) {
+            let visited = new Set();
+            let matches = [];
+            
+            function visit(currR, currC) {
+                let key = `${currR},${currC}`;
+                if (visited.has(key)) return;
+                visited.add(key);
+                
+                if (currR < 0 || currR >= grid.length || currC < 0 || currC >= COLS) return;
+                let cell = grid[currR][currC];
+                if (!cell || !cell.active || cell.type !== type) return;
+
+                matches.push({r: currR, c: currC});
+
+                // Neighbors (Hex Grid)
+                let neighbors = [];
+                // Even row neighbors: (r, c-1), (r, c+1), (r-1, c-1), (r-1, c), (r+1, c-1), (r+1, c)
+                // Odd row neighbors:  (r, c-1), (r, c+1), (r-1, c), (r-1, c+1), (r+1, c), (r+1, c+1)
+                
+                let isEven = (currR % 2 === 0);
+                let offsets = isEven ? 
+                    [[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]] : 
+                    [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]];
+
+                for(let o of offsets) {
+                    visit(currR + o[0], currC + o[1]);
+                }
+            }
+
+            visit(r, c);
+
+            if (matches.length >= 3) {
+                // Play Sound
+                if (ASSETS.sounds[type]) {
+                    // Clone to allow overlapping sounds
+                    let s = ASSETS.sounds[type].cloneNode();
+                    s.volume = 1.0;
+                    s.play();
+                }
+
+                // Remove matches
+                matches.forEach(m => {
+                    grid[m.r][m.c].active = false;
+                    // Add explosion effect logic here if desired
+                });
+
+                // Drop floating bubbles (Optional optimization: Check for floating clusters)
+                removeFloatingBubbles();
+            }
+        }
+
+        function removeFloatingBubbles() {
+            // Find all bubbles attached to ceiling (row 0)
+            let attached = new Set();
+            
+            function visitAttached(r, c) {
+                let key = `${r},${c}`;
+                if (attached.has(key)) return;
+                attached.add(key);
+
+                if (r < 0 || r >= grid.length || c < 0 || c >= COLS) return;
+                let cell = grid[r][c];
+                if (!cell || !cell.active) return;
+
+                let isEven = (r % 2 === 0);
+                let offsets = isEven ? 
+                    [[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]] : 
+                    [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]];
+
+                for(let o of offsets) {
+                    visitAttached(r + o[0], c + o[1]);
+                }
+            }
+
+            // Start from all active bubbles in row 0
+            for (let c = 0; c < COLS; c++) {
+                if (grid[0][c] && grid[0][c].active) {
+                    visitAttached(0, c);
+                }
+            }
+
+            // Remove anything not attached
+            for (let r = 0; r < grid.length; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (grid[r][c] && grid[r][c].active) {
+                        if (!attached.has(`${r},${c}`)) {
+                            grid[r][c].active = false; // Drop it
+                        }
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Grid
+            for (let r = 0; r < grid.length; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (grid[r] && grid[r][c] && grid[r][c].active) {
+                        let pos = getTileCoordinate(r, c);
+                        drawBubble(ctx, pos.x, pos.y, grid[r][c].type, TILE_SIZE/2);
+                    }
+                }
+            }
+
+            // Draw Shooter Line (Guide)
+            if (bullet && !bullet.moving) {
+                ctx.beginPath();
+                ctx.moveTo(bullet.x, bullet.y);
+                // Calculate end point based on angle
+                let guideLen = 100;
+                ctx.lineTo(bullet.x + Math.cos(bullet.angle) * guideLen, bullet.y + Math.sin(bullet.angle) * guideLen);
+                ctx.strokeStyle = "rgba(255,255,255,0.3)";
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Draw Bullet
+            if (bullet) {
+                drawBubble(ctx, bullet.x, bullet.y, bullet.type, TILE_SIZE/2);
+            }
+
+            // Draw Next Bubble Indicator
+            ctx.fillStyle = "white";
+            ctx.font = "16px Fredoka One";
+            ctx.fillText("NEXT", 20, canvas.height - 40);
+            drawBubble(ctx, 40, canvas.height - 20, nextBulletType, TILE_SIZE/3);
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- INPUT HANDLING ---
+        
+        function handleInputStart(x, y) {
+            if (!gameActive || bullet.moving) return;
+            // Update angle
+            let dx = x - bullet.x;
+            let dy = y - bullet.y;
+            bullet.angle = Math.atan2(dy, dx);
+        }
+
+        function handleInputMove(x, y) {
+            if (!gameActive || bullet.moving) return;
+            let dx = x - bullet.x;
+            let dy = y - bullet.y;
+            bullet.angle = Math.atan2(dy, dx);
+            // Clamp angle to prevent shooting too flat
+            if (bullet.angle > -0.2) bullet.angle = -0.2;
+            if (bullet.angle < -Math.PI + 0.2) bullet.angle = -Math.PI + 0.2;
+        }
+
+        function handleInputEnd() {
+            if (!gameActive || bullet.moving) return;
+            // Fire!
+            bullet.dx = Math.cos(bullet.angle) * bullet.speed;
+            bullet.dy = Math.sin(bullet.angle) * bullet.speed;
+            bullet.moving = true;
+        }
+
+        // Mouse Events
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            handleInputMove(e.clientX - rect.left, e.clientY - rect.top);
+        });
+        canvas.addEventListener('mousedown', e => {
+            const rect = canvas.getBoundingClientRect();
+            handleInputStart(e.clientX - rect.left, e.clientY - rect.top);
+            // Fire immediately on click for desktop feel, or use up/down logic
+            handleInputEnd();
+        });
+
+        // Touch Events
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            let touch = e.touches[0];
+            handleInputStart(touch.clientX - rect.left, touch.clientY - rect.top);
+        }, {passive: false});
+
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            let touch = e.touches[0];
+            handleInputMove(touch.clientX - rect.left, touch.clientY - rect.top);
+        }, {passive: false});
+
+        canvas.addEventListener('touchend', e => {
+            e.preventDefault();
+            handleInputEnd();
+        });
+
+        // Start Button
+        overlay.addEventListener('click', startGame);
+
+        // Window Resize
+        window.addEventListener('resize', resize);
+        
+        // --- BOOT ---
+        loadAssets();
+        resize();
+
+    </script>
+</body>
+</html>
